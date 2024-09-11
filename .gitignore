@@ -11,3 +11,8 @@ claude-env/
 build/
 dist/
 __pycache__/
+# Ignora todos los archivos .pyc (archivos de Python compilados)
+*.pyc
+# Ignora todos los archivos .pyo y .pyd (Otros tipos de archivos compilados de Python)
+*.pyo
+*.pyd
