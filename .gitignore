@@ -2,7 +2,9 @@
 venv/
 env/
 .venv/
-claude-env
+claude-env/
+.env
+*.env
 
 
 # Directorios de construcción y distribución
