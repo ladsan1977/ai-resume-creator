@@ -1,0 +1,11 @@
+# Entornos virtuales
+venv/
+env/
+.venv/
+claude-env
+
+
+# Directorios de construcción y distribución
+build/
+dist/
+__pycache__/

@@ -1,0 +1,216 @@
+import utils
+import os
+from dotenv import load_dotenv 
+from anthropic import Anthropic, APIStatusError, APIError
+import xml.dom.minidom
+import re
+import logging
+import xml.etree.ElementTree as ET
+
+# Load environment variables from .env file
+load_dotenv()
+
+# System prompt
+BASE_SYSTEM_PROMPT = "You are a Counsel to advise a potential employee in the creation of a Canadian resume"
+# Models that maintain context memory across interactions
+MAINMODEL = "claude-3-5-sonnet-20240620"
+
+logger = logging.getLogger(__name__)
+
+class PromptCache:
+    def __init__(self):
+        self.cache = {}
+    
+    def get_cached_prompt(self, key):
+        return self.cache.get(key)
+    
+    def add_to_cache(self, key, prompt):
+        self.cache[key] = prompt
+
+class ClaudeAPIClient:
+    # Initialize the Anthropic client
+    def __init__(self, api_key=None, model=MAINMODEL):
+        if api_key is None:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+        self.client = Anthropic(api_key=api_key)
+        self.model = model
+
+    def generate_text(self, system_prompt, user_prompt, max_tokens=1024, temperature=0):
+        try:
+            message = self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": user_prompt
+                            }
+                        ]
+                    },
+                ]
+            )
+            print(message.content[0].text)
+            return message.content[0].text
+        except (APIStatusError, APIError) as e:
+            logger.error(f"API Error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.exception("Unexpected error in generate_text")
+            raise
+
+class XMLParser:
+    @staticmethod
+    def extract_xml_section(content, tag):
+        # no funciona actualmente se reemplazo x extract_and_format_xml
+        try:
+            root = ET.fromstring(content)
+            section = root.find(tag)
+            return ET.tostring(section, encoding='unicode') if section is not None else None
+        except ET.ParseError as e:
+            logger.error(f"Error extracting XML section: {e}")
+            return None
+        
+    @staticmethod  
+    def extract_and_format_xml(content, tag):
+        pattern = f'<{tag}>(.*?)</{tag}>'
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            xml_string = f'<{tag}>{match.group(1)}</{tag}>'
+            dom = xml.dom.minidom.parseString(xml_string)
+            return dom.toprettyxml(indent="  ")
+        return None
+
+
+class ResumeGenerator:
+    def __init__(self, prompt_cache):
+        self.base_system_prompt = BASE_SYSTEM_PROMPT
+        self.prompt_cache = prompt_cache
+
+    def build_resume_prompt(self, job_information):
+        cached_guidelines = self.prompt_cache.get_cached_prompt('guidelines')
+        cached_guidelines_cover = self.prompt_cache.get_cached_prompt('guidelines_cover')
+
+        if not cached_guidelines:
+            cached_guidelines = f"""
+            <guidelines>
+            {utils.guidelines_info}
+            </guidelines>
+            """
+            self.prompt_cache.add_to_cache('guidelines', cached_guidelines)
+
+        if not cached_guidelines_cover:
+            cached_guidelines_cover = f"""
+            <cover>
+            {utils.cover_letter}
+            </cover>
+            """
+            self.prompt_cache.add_to_cache('guidelines_cover', cached_guidelines_cover)
+        
+        return f"""You are tasked with analyzing a job posting, extracting relevant keywords, and then creating a tailored resume and cover letter. Follow these steps carefully:
+
+        1. Analyze the following job posting:
+        <job_information>
+        {job_information}
+        </job_information>
+
+        2. Extract relevant keywords from the job posting and present them in the following format:
+        <keywords>
+        <job_title_and_level>[Keywords related to job title and level]</job_title_and_level>
+        <required_skills>[Keywords related to required skills and competencies]</required_skills>
+        <desired_experience>[Keywords related to desired experience]</desired_experience>
+        <education>[Keywords related to educational requirements]</education>
+        <industry_terms>[Industry-specific terminology]</industry_terms>
+        <company_culture>[Keywords related to company values or culture]</company_culture>
+        </keywords>
+
+        3. Provide a brief summary of the job posting in 2-3 sentences:
+        <summary>[Your 2-3 sentence summary of the job posting]</summary>
+
+        4. Now, using the extracted keywords and summary, create a resume based on the following candidate profile and guidelines:
+
+        <profile>
+        {utils.profile_pdf}
+        </profile>
+
+        <guidelines>
+        {cached_guidelines}
+        </guidelines>
+
+        Present the resume in the following XML format:
+        <resume>
+        <personalInfo></personalInfo>
+        <professionalSummary></professionalSummary>
+        <workExperience></workExperience>
+        <education></education>
+        <skills></skills>
+        <certifications></certifications>
+        </resume>
+
+        5. Create a cover letter using the following guidelines:
+        <cover>
+        {cached_guidelines_cover}
+        </cover>
+
+        Present the cover letter in the following XML format:
+        <coverLetter>
+        <header></header>
+        <content></content>
+        <salutationAndSignature></salutationAndSignature>
+        </coverLetter>
+
+        Important notes:
+        - Focus on the guidelines to create a powerful resume.
+        - Ensure that the resume and cover letter align with the candidate's profile and the job requirements.
+        - Do not include skills or experiences not explicitly mentioned in the candidate's profile.
+        - You may enhance and expand on points mentioned in both the candidate's profile and the job posting.
+        - Showcase how the candidate's relevant skills and experiences make them an ideal fit for the position.
+        - Ensure all enhancements are grounded in the candidate's actual experience.
+        - Present only the XML formats for keywords, summary, resume, and cover letter, clearly separated.
+        """
+
+    def generate_resume_package(self, job_information, api_client, xml_parser):
+        prompt = self.build_resume_prompt(job_information)
+
+        response = api_client.generate_text(self.base_system_prompt, prompt, max_tokens=2048, temperature=0)
+        return self.parse_response(response, xml_parser)
+
+    def parse_response(self, response, xml_parser):
+        keywords = xml_parser.extract_and_format_xml(response, 'keywords')
+        summary = xml_parser.extract_and_format_xml(response, 'summary')
+        resume = xml_parser.extract_and_format_xml(response, 'resume')
+        cover_letter = xml_parser.extract_and_format_xml(response, 'coverLetter')
+
+        return {
+            'keywords': keywords,
+            'summary': summary,
+            'resume': resume,
+            'cover_letter': cover_letter
+        }
+
+def main():
+    api_client = ClaudeAPIClient()
+    xml_parser = XMLParser()
+    prompt_cache = PromptCache()
+    resume_generator = ResumeGenerator(prompt_cache)
+
+    job_information = utils.job_posting
+    result = resume_generator.generate_resume_package(job_information, api_client, xml_parser)
+
+    print("\nKeywords:")
+    print(result['keywords'])
+    print("\nSummary:")
+    print(result['summary'])
+    print("\nResume:")
+    print(result['resume'])
+    print("\nCover Letter:")
+    print(result['cover_letter'])
+    
+if __name__ == "__main__":
+    main()
