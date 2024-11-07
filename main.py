@@ -1,29 +1,27 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException, Request # type: ignore
+from fastapi.responses import JSONResponse  # type: ignore
+from pydantic import BaseModel
 from app import ClaudeAPIClient, XMLParser, PromptCache, ResumeGenerator
 import json
+import base64
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timedelta
+from PyPDF2 import PdfReader # type: ignore
+import io
 import os
 
-app = Flask(__name__)
 
-# Configurar logging
-log_file = 'app.log'
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S')
+# logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-# Configurar el manejador de archivos con rotación
-file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+app = FastAPI()
 
-# Añadir el manejador al logger de la aplicación
-app.logger.addHandler(file_handler)
+class ResumeRequest(BaseModel):
+    job_posting: str
+    profile_pdf: str  # Base64 encoded PDF content
 
 api_client = ClaudeAPIClient()
-xml_parser = XMLParser()
+# xml_parser = XMLParser()
 prompt_cache = PromptCache()
 resume_generator = ResumeGenerator(prompt_cache)
 
@@ -38,59 +36,44 @@ def escape_special_chars(text):
     # [1:-1] se usa para quitar las comillas dobles que json.dumps() añade al principio y al final
     return json.dumps(text)[1:-1]
 
-def clean_old_logs():
-    """Elimina los mensajes de log del mes pasado"""
-    if not os.path.exists(log_file):
-        return
-
-    one_month_ago = datetime.now() - timedelta(days=30)
-    temp_file = log_file + '.temp'
-
-    with open(log_file, 'r') as input_file, open(temp_file, 'w') as output_file:
-        for line in input_file:
-            try:
-                log_date = datetime.strptime(line[:19], '%Y-%m-%d %H:%M:%S')
-                if log_date >= one_month_ago:
-                    output_file.write(line)
-            except ValueError:
-                # Si no se puede parsear la fecha, mantener la línea
-                output_file.write(line)
-
-    os.replace(temp_file, log_file)
-
 @app.route('/generate_resume', methods=['POST'])
-def generate_resume():
-    # Limpiar logs antiguos antes de registrar nuevos valores
-    clean_old_logs()
-
+async def generate_resume(request: Request):
     try:
-        # data = request.json
-        data = request.get_json(force=True)  # Force JSON parsing
-    except json.JSONDecodeError:
-        return jsonify({"error": "Invalid JSON in request body"}), 400
+        body = await request.json()
 
-    job_posting = data.get('job_posting')
-    profile_pdf = data.get('profile_pdf')
+        resume_request = ResumeRequest(**body)
 
-    if not job_posting or not profile_pdf:
-        return jsonify({"error": "Both job_posting and profile_pdf are required"}), 400
+        pdf_content = base64.b64decode(resume_request.profile_pdf)
 
-    try:
-        # Escape special characters in the input strings
-        job_posting_escaped = escape_special_chars(job_posting)
-        profile_pdf_escaped = escape_special_chars(profile_pdf)
+        # Create a PDF reader object
+        pdf_reader = PdfReader(io.BytesIO(pdf_content))
+        
+        # Extract text from all pages
+        profile_content = ""
+        for page in pdf_reader.pages:
+            profile_content += page.extract_text()
+        
+        # logger.debug(f"Extracted text from PDF: {profile_content[:400]}...")
 
-        # Registrar los valores completos
-        # app.logger.info(f"job_posting: {job_posting_escaped}")
-        # app.logger.info(f"profile_pdf: {profile_pdf_escaped}")
+        if not resume_request.job_posting or not profile_content:
+            return {"error": "Both job_posting and profile_pdf are required"}, 400
+        
+        job_posting_escaped = escape_special_chars(resume_request.job_posting)
+        profile_pdf_escaped = escape_special_chars(profile_content)
 
-        print(f"job_posting: {job_posting_escaped}")
-        print(f"profile_pdf: {profile_pdf_escaped}")
+        result = resume_generator.generate_resume_package(job_posting_escaped, profile_pdf_escaped, api_client)
+        result_dict = json.loads(result)
+        # logger.debug(f"Result --> {result}")
 
-        result = resume_generator.generate_resume_package(job_posting_escaped, profile_pdf_escaped, api_client, xml_parser)
-        return jsonify(result)
+        response_dict = {
+            **result_dict
+        }
+        # Devolver la respuesta JSON
+        return JSONResponse(content=response_dict)
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+         return JSONResponse(content={"error": str(e)}, status_code=400)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

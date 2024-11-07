@@ -1,4 +1,30 @@
 from app.utils import constants
+import json
+import xml.etree.ElementTree as ET
+
+def parse_response(response):
+    try:
+        # Envolver la respuesta en un elemento raíz para que sea un XML válido
+        root = ET.fromstring(f'<root>{response}</root>')
+        parsed = {}
+        
+        for element in root:
+            if element.tag in ['summary', 'resume', 'coverLetter']:
+                parsed[element.tag] = xml_to_dict(element)
+        
+        return parsed
+    except ET.ParseError as e:
+        print(f"Error parsing XML: {e}")
+        return {"error": "Failed to parse XML response"}
+    
+def xml_to_dict(element):
+    result = {}
+    for child in element:
+        if len(child) == 0:
+            result[child.tag] = child.text.strip() if child.text else ''
+        else:
+            result[child.tag] = xml_to_dict(child)
+    return result
 
 class ResumeGenerator:
     def __init__(self, prompt_cache):
@@ -7,8 +33,8 @@ class ResumeGenerator:
 
     def build_resume_prompt(self, job_information, profile_pdf):
 
-    # PARA LOCAL QUITAR COMENTARIO A LAS SIGUIENTES 4 LINEAS
-    # def build_resume_prompt(self, job_information):
+        # PARA LOCAL QUITAR COMENTARIO A LAS SIGUIENTES 4 LINEAS
+        # def build_resume_prompt(self, job_information):
         
         # profile_pdf = f"""<profile>
         # {constants.PROFILE_PDF}
@@ -44,7 +70,7 @@ class ResumeGenerator:
         job title and level, required skills, desired experience, education and company culture.
         
         3. Provide a brief summary of the job posting in 2-3 sentences:
-        <summary>[Your 2-3 sentence summary of the job posting]</summary>
+        <summary><briefSummary>[Your 2-3 sentence summary of the job posting]</briefSummary></summary>
 
         4. Now, using the extracted keywords and summary, create a resume based on the following candidate profile and guidelines:
 
@@ -92,26 +118,16 @@ class ResumeGenerator:
     # PARA LOCAL
     # def generate_resume_package(self, job_information, api_client, xml_parser):
     # PARA API
-    def generate_resume_package(self, job_information, profile_pdf, api_client, xml_parser):
+    def generate_resume_package(self, job_information, profile_pdf, api_client):
         
         # PARA API
         prompt = self.build_resume_prompt(job_information, profile_pdf)
 
         # PARA LOCAL
         # prompt = self.build_resume_prompt(job_information)
-
         response = api_client.generate_text(self.base_system_prompt, prompt, max_tokens=2048, temperature=0)
-        return self.parse_response(response, xml_parser)
 
-    def parse_response(self, response, xml_parser):
-        # keywords = xml_parser.extract_and_format_xml(response, 'keywords')
-        summary = xml_parser.extract_and_format_xml(response, 'summary')
-        resume = xml_parser.extract_and_format_xml(response, 'resume')
-        cover_letter = xml_parser.extract_and_format_xml(response, 'coverLetter')
+        parsed_response = parse_response(response)
 
-        return {
-            # 'keywords': keywords,
-            'summary': summary,
-            'resume': resume,
-            'cover_letter': cover_letter
-        }
+        # Convertir el diccionario parseado a JSON
+        return json.dumps(parsed_response)

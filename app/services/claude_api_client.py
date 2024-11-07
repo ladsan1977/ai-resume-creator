@@ -1,8 +1,5 @@
-import logging
 from anthropic import Anthropic, APIStatusError, APIError
 from app.config import ANTHROPIC_API_KEY, MODEL
-
-logger = logging.getLogger(__name__)
 
 class ClaudeAPIClient:
     def __init__(self, api_key=ANTHROPIC_API_KEY, model=MODEL):
