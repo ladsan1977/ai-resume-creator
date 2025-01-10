@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app import ClaudeAPIClient, XMLParser, PromptCache, ResumeGenerator
 import json
@@ -15,6 +16,18 @@ import os
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+# Configuración de CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+    allow_credentials=True,
+    max_age=3600,
+)
 
 class ResumeRequest(BaseModel):
     job_posting: str
