@@ -1,10 +1,13 @@
 # Entornos virtuales
 venv/
+.venv/
 env/
 .venv/
 claude-env/
+.claude-env/
 .env
 *.env
+*.log
 
 
 # Directorios de construcción y distribución

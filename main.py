@@ -1,12 +1,12 @@
-from fastapi import FastAPI, HTTPException, Request # type: ignore
-from fastapi.responses import JSONResponse  # type: ignore
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app import ClaudeAPIClient, XMLParser, PromptCache, ResumeGenerator
 import json
 import base64
 import logging
 from logging.handlers import RotatingFileHandler
-from PyPDF2 import PdfReader # type: ignore
+from PyPDF2 import PdfReader
 import io
 import os
 
@@ -36,7 +36,7 @@ def escape_special_chars(text):
     # [1:-1] se usa para quitar las comillas dobles que json.dumps() añade al principio y al final
     return json.dumps(text)[1:-1]
 
-@app.route('/generate_resume', methods=['POST'])
+@app.post('/generate_resume')
 async def generate_resume(request: Request):
     try:
         body = await request.json()
